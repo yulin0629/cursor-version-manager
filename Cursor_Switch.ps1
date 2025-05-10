@@ -416,6 +416,7 @@ function Show-Menu {
     Write-Host "7. 創建版本啟動批處理檔" -ForegroundColor Green  # 新增選項
     Write-Host "8. 直接啟動特定版本" -ForegroundColor Green  # 新增選項
     Write-Host "9. 為所有版本創建啟動器" -ForegroundColor Green  # 新增選項
+    Write-Host "10. 重命名版本" -ForegroundColor Green  # 新增選項
     Write-Host "0. 退出" -ForegroundColor Yellow
     Write-Host
     
@@ -633,6 +634,44 @@ function Show-Menu {
             pause
             Show-Menu
         }
+        "10" {
+            if ($allVersions.Count -eq 0) {
+                Write-Host "尚未創建任何版本！" -ForegroundColor Red
+                pause
+                Show-Menu
+                return
+            }
+
+            Write-Host "可用版本:" -ForegroundColor Cyan
+            for ($i = 0; $i -lt $allVersions.Count; $i++) {
+                Write-Host "$($i+1). $($allVersions[$i])" -ForegroundColor White
+            }
+
+            $versionChoice = Read-Host "請選擇要重命名的版本編號"
+            if ([string]::IsNullOrWhiteSpace($versionChoice)) {
+                Write-Host "未選擇任何版本！" -ForegroundColor Red
+            } else {
+                try {
+                    $versionIdx = [int]$versionChoice - 1
+                    if ($versionIdx -ge 0 -and $versionIdx -lt $allVersions.Count) {
+                        $oldVersion = $allVersions[$versionIdx]
+                        $newVersion = Read-Host "請輸入新版本名稱"
+
+                        if (-not [string]::IsNullOrWhiteSpace($newVersion)) {
+                            Rename-CursorVersion -OldVersion $oldVersion -NewVersion $newVersion
+                        } else {
+                            Write-Host "新版本名稱不能為空！" -ForegroundColor Red
+                        }
+                    } else {
+                        Write-Host "無效的選擇！" -ForegroundColor Red
+                    }
+                } catch {
+                    Write-Host "請輸入有效的數字！" -ForegroundColor Red
+                }
+            }
+            pause
+            Show-Menu
+        }
         "0" {
             return
         }
@@ -785,24 +824,24 @@ function Start-CursorVersion {
         [Parameter(Mandatory=$true)]
         [string]$Version
     )
-    
+
     $versionDir = Join-Path $cursorVersionsDir $Version
     $programDir = Join-Path $versionDir "Program"
     $configDir = Join-Path $versionDir "Config"
     $exePath = Join-Path $programDir "Cursor.exe"
-    
+
     # 檢查版本是否存在
     if (-not (Test-Path $versionDir)) {
         Write-Host "版本 $Version 不存在！" -ForegroundColor Red
         return
     }
-    
+
     # 檢查可執行檔是否存在
     if (-not (Test-Path $exePath)) {
         Write-Host "找不到 $Version 版本的可執行檔，請先安裝此版本！" -ForegroundColor Red
         return
     }
-    
+
     # 啟動 Cursor
     try {
         Start-Process $exePath -ArgumentList "--user-data-dir=""$configDir"""
@@ -810,6 +849,153 @@ function Start-CursorVersion {
     } catch {
         Write-Host "啟動 Cursor 時發生錯誤: $_" -ForegroundColor Red
     }
+}
+
+# 重命名版本
+function Rename-CursorVersion {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$OldVersion,
+
+        [Parameter(Mandatory=$true)]
+        [string]$NewVersion
+    )
+
+    # 驗證參數
+    if ([string]::IsNullOrWhiteSpace($OldVersion) -or [string]::IsNullOrWhiteSpace($NewVersion)) {
+        Write-Host "版本名稱不能為空！" -ForegroundColor Red
+        return
+    }
+
+    $oldVersionDir = Join-Path $cursorVersionsDir $OldVersion
+    $newVersionDir = Join-Path $cursorVersionsDir $NewVersion
+
+    # 檢查原版本是否存在
+    if (-not (Test-Path $oldVersionDir)) {
+        Write-Host "版本 $OldVersion 不存在！" -ForegroundColor Red
+        return
+    }
+
+    # 檢查新版本名稱是否已被使用
+    if (Test-Path $newVersionDir) {
+        Write-Host "版本名稱 $NewVersion 已存在！" -ForegroundColor Red
+        return
+    }
+
+    # 檢查當前版本
+    $currentVersion = Get-CurrentCursorVersion
+    $isCurrentVersion = ($currentVersion -eq $OldVersion)
+
+    # 準備路徑
+    $oldProgramDir = Join-Path $oldVersionDir "Program"
+    $oldConfigDir = Join-Path $oldVersionDir "Config"
+
+    # 臨時變數，用於恢復
+    $tempBackupProgram = $null
+    $tempBackupConfig = $null
+
+    # 如果是當前版本，需要暫時解除連結
+    if ($isCurrentVersion) {
+        Write-Host "檢測到 $OldVersion 是當前使用中的版本，將暫時解除系統連結..." -ForegroundColor Yellow
+
+        try {
+            # 記錄和檢查連結
+            if ((Get-Item $cursorProgramPath -ErrorAction SilentlyContinue).LinkType -eq "SymbolicLink") {
+                $tempBackupProgram = (Get-Item $cursorProgramPath).Target
+                Remove-Item $cursorProgramPath -Force -ErrorAction Stop
+            }
+
+            if ((Get-Item $cursorConfigPath -ErrorAction SilentlyContinue).LinkType -eq "SymbolicLink") {
+                $tempBackupConfig = (Get-Item $cursorConfigPath).Target
+                Remove-Item $cursorConfigPath -Force -ErrorAction Stop
+            }
+        } catch {
+            Write-Host "解除系統連結時發生錯誤: $_" -ForegroundColor Red
+            return
+        }
+    }
+
+    # 執行重命名
+    try {
+        Rename-Item -Path $oldVersionDir -NewName $NewVersion -ErrorAction Stop
+        Write-Host "版本資料夾已從 $OldVersion 重命名為 $NewVersion" -ForegroundColor Green
+    } catch {
+        Write-Host "重命名版本資料夾時發生錯誤: $_" -ForegroundColor Red
+
+        # 恢復系統連結（如果之前解除了）
+        if ($isCurrentVersion) {
+            try {
+                if ($tempBackupProgram) {
+                    New-Item -Path $cursorProgramPath -ItemType SymbolicLink -Value $tempBackupProgram -ErrorAction Stop | Out-Null
+                }
+                if ($tempBackupConfig) {
+                    New-Item -Path $cursorConfigPath -ItemType SymbolicLink -Value $tempBackupConfig -ErrorAction Stop | Out-Null
+                }
+                Write-Host "已恢復系統連結" -ForegroundColor Green
+            } catch {
+                Write-Host "警告: 無法恢復系統連結，您可能需要手動重新連結" -ForegroundColor Red
+            }
+        }
+        return
+    }
+
+    # 如果成功重命名，重建系統連結
+    if ($isCurrentVersion) {
+        $newProgramDir = Join-Path $newVersionDir "Program"
+        $newConfigDir = Join-Path $newVersionDir "Config"
+
+        try {
+            New-Item -Path $cursorProgramPath -ItemType SymbolicLink -Value $newProgramDir -ErrorAction Stop | Out-Null
+            New-Item -Path $cursorConfigPath -ItemType SymbolicLink -Value $newConfigDir -ErrorAction Stop | Out-Null
+            Write-Host "已重新建立系統符號連結至新版本路徑" -ForegroundColor Green
+        } catch {
+            Write-Host "重建系統符號連結時發生錯誤: $_" -ForegroundColor Red
+            Write-Host "您可能需要手動重新連結系統路徑" -ForegroundColor Yellow
+        }
+    }
+
+    # 更新桌面捷徑
+    $desktopPath = [Environment]::GetFolderPath("Desktop")
+    $oldShortcut = Join-Path $desktopPath "Cursor_$OldVersion.lnk"
+
+    if (Test-Path $oldShortcut) {
+        try {
+            Create-CursorShortcut -Version $NewVersion -ShortcutLocation "Desktop"
+            Remove-Item $oldShortcut -Force -ErrorAction SilentlyContinue
+            Write-Host "已更新桌面捷徑" -ForegroundColor Green
+        } catch {
+            Write-Host "更新桌面捷徑時發生錯誤，您可能需要手動更新" -ForegroundColor Yellow
+        }
+    }
+
+    # 更新開始選單捷徑
+    $startMenuPath = [Environment]::GetFolderPath("StartMenu")
+    $oldStartShortcut = Join-Path $startMenuPath "Cursor_$OldVersion.lnk"
+
+    if (Test-Path $oldStartShortcut) {
+        try {
+            Create-CursorShortcut -Version $NewVersion -ShortcutLocation "StartMenu"
+            Remove-Item $oldStartShortcut -Force -ErrorAction SilentlyContinue
+            Write-Host "已更新開始選單捷徑" -ForegroundColor Green
+        } catch {
+            Write-Host "更新開始選單捷徑時發生錯誤，您可能需要手動更新" -ForegroundColor Yellow
+        }
+    }
+
+    # 更新啟動批處理檔
+    $oldBatchFile = Join-Path $cursorVersionsDir "Launch_Cursor_$OldVersion.bat"
+
+    if (Test-Path $oldBatchFile) {
+        try {
+            Create-CursorBatchFile -Version $NewVersion
+            Remove-Item $oldBatchFile -Force -ErrorAction SilentlyContinue
+            Write-Host "已更新啟動批處理檔" -ForegroundColor Green
+        } catch {
+            Write-Host "更新啟動批處理檔時發生錯誤，您可能需要手動更新" -ForegroundColor Yellow
+        }
+    }
+
+    Write-Host "版本 $OldVersion 已成功重命名為 $NewVersion" -ForegroundColor Green
 }
 
 # 啟動菜單
