@@ -417,6 +417,7 @@ function Show-Menu {
     Write-Host "8. 直接啟動特定版本" -ForegroundColor Green  # 新增選項
     Write-Host "9. 為所有版本創建啟動器" -ForegroundColor Green  # 新增選項
     Write-Host "10. 重命名版本" -ForegroundColor Green  # 新增選項
+    Write-Host "11. 刪除版本" -ForegroundColor Yellow  # 新增選項
     Write-Host "0. 退出" -ForegroundColor Yellow
     Write-Host
     
@@ -662,6 +663,37 @@ function Show-Menu {
                         } else {
                             Write-Host "新版本名稱不能為空！" -ForegroundColor Red
                         }
+                    } else {
+                        Write-Host "無效的選擇！" -ForegroundColor Red
+                    }
+                } catch {
+                    Write-Host "請輸入有效的數字！" -ForegroundColor Red
+                }
+            }
+            pause
+            Show-Menu
+        }
+        "11" {
+            if ($allVersions.Count -eq 0) {
+                Write-Host "尚未創建任何版本！" -ForegroundColor Red
+                pause
+                Show-Menu
+                return
+            }
+
+            Write-Host "可用版本:" -ForegroundColor Cyan
+            for ($i = 0; $i -lt $allVersions.Count; $i++) {
+                Write-Host "$($i+1). $($allVersions[$i])" -ForegroundColor White
+            }
+
+            $versionChoice = Read-Host "請選擇要刪除的版本編號"
+            if ([string]::IsNullOrWhiteSpace($versionChoice)) {
+                Write-Host "未選擇任何版本！" -ForegroundColor Red
+            } else {
+                try {
+                    $versionIdx = [int]$versionChoice - 1
+                    if ($versionIdx -ge 0 -and $versionIdx -lt $allVersions.Count) {
+                        Remove-CursorVersion -Version $allVersions[$versionIdx]
                     } else {
                         Write-Host "無效的選擇！" -ForegroundColor Red
                     }
@@ -996,6 +1028,154 @@ function Rename-CursorVersion {
     }
 
     Write-Host "版本 $OldVersion 已成功重命名為 $NewVersion" -ForegroundColor Green
+}
+
+# 刪除版本
+function Remove-CursorVersion {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$Version
+    )
+
+    # 確認版本存在
+    $versionDir = Join-Path $cursorVersionsDir $Version
+    if (-not (Test-Path $versionDir)) {
+        Write-Host "版本 $Version 不存在！" -ForegroundColor Red
+        return
+    }
+
+    # 檢查其他版本對此版本的依賴
+    $allVersions = Get-AllCursorVersions
+    $dependents = @()
+
+    foreach ($v in $allVersions) {
+        if ($v -eq $Version) { continue }
+
+        $vDir = Join-Path $cursorVersionsDir $v
+        $vProgram = Join-Path $vDir "Program"
+        $vConfig  = Join-Path $vDir "Config"
+
+        if (Test-Path $vProgram) {
+            try {
+                $item = Get-Item $vProgram -ErrorAction Stop
+                if ($item.LinkType -eq "SymbolicLink") {
+                    if ($item.Target -ieq (Join-Path $versionDir "Program")) {
+                        $dependents += "$v (Program)"
+                    }
+                }
+            } catch {}
+        }
+
+        if (Test-Path $vConfig) {
+            try {
+                $item = Get-Item $vConfig -ErrorAction Stop
+                if ($item.LinkType -eq "SymbolicLink") {
+                    if ($item.Target -ieq (Join-Path $versionDir "Config")) {
+                        $dependents += "$v (Config)"
+                    }
+                }
+            } catch {}
+        }
+    }
+
+    if ($dependents.Count -gt 0) {
+        Write-Host "以下版本仍依賴 $Version ，請先解除依賴後再刪除：" -ForegroundColor Red
+        foreach ($d in $dependents) {
+            Write-Host "  $d" -ForegroundColor Yellow
+        }
+        return
+    }
+
+    # 如為當前版本，處理切換/解除
+    $currentVersion = Get-CurrentCursorVersion
+    if ($currentVersion -eq $Version) {
+        Write-Host "您正使用欲刪除的版本 $Version" -ForegroundColor Yellow
+        $remainingVersions = $allVersions | Where-Object { $_ -ne $Version }
+
+        if ($remainingVersions.Count -eq 0) {
+            $choice = Read-Host "刪除後將無任何版本可用並會移除系統連結，是否繼續？(Y/N)"
+            if ($choice -ne 'Y' -and $choice -ne 'y') { return }
+
+            # 移除系統連結
+            try {
+                if (Test-Path $cursorProgramPath) {
+                    Remove-Item $cursorProgramPath -Force -ErrorAction Stop
+                }
+                if (Test-Path $cursorConfigPath) {
+                    Remove-Item $cursorConfigPath -Force -ErrorAction Stop
+                }
+            } catch {
+                Write-Host "無法解除系統連結： $_" -ForegroundColor Red
+                return
+            }
+        } else {
+            Write-Host "請選擇新的當前版本：" -ForegroundColor Cyan
+            for ($i = 0; $i -lt $remainingVersions.Count; $i++) {
+                Write-Host "$($i+1). $($remainingVersions[$i])" -ForegroundColor White
+            }
+            Write-Host "0. 只解除連結，不切換" -ForegroundColor White
+
+            $sel = Read-Host "輸入選項編號"
+
+            if ($sel -eq '0') {
+                try {
+                    if (Test-Path $cursorProgramPath) { Remove-Item $cursorProgramPath -Force -ErrorAction Stop }
+                    if (Test-Path $cursorConfigPath) { Remove-Item $cursorConfigPath -Force -ErrorAction Stop }
+                } catch {
+                    Write-Host "無法解除系統連結： $_" -ForegroundColor Red
+                    return
+                }
+            } else {
+                try {
+                    $idx = [int]$sel - 1
+                    if ($idx -ge 0 -and $idx -lt $remainingVersions.Count) {
+                        Switch-CursorVersion -Version $remainingVersions[$idx]
+                    } else {
+                        Write-Host "無效的選擇！" -ForegroundColor Red
+                        return
+                    }
+                } catch {
+                    Write-Host "請輸入有效的數字！" -ForegroundColor Red
+                    return
+                }
+            }
+        }
+    }
+
+    # 再次確認刪除
+    Write-Host "即將刪除版本 $Version 及相關文件，此操作無法復原！" -ForegroundColor Red
+    $confirm = Read-Host "確定要刪除？(Y/N)"
+    if ($confirm -ne 'Y' -and $confirm -ne 'y') { return }
+
+    # 刪除捷徑與批處理檔
+    $desktopPath   = [Environment]::GetFolderPath("Desktop")
+    $startMenuPath = [Environment]::GetFolderPath("StartMenu")
+
+    $deskShortcut  = Join-Path $desktopPath "Cursor_${Version}.lnk"
+    $menuShortcut  = Join-Path $startMenuPath "Cursor_${Version}.lnk"
+    $batchFilePath = Join-Path $cursorVersionsDir "Launch_Cursor_${Version}.bat"
+
+    foreach ($p in @($deskShortcut, $menuShortcut, $batchFilePath)) {
+        if (Test-Path $p) {
+            try { Remove-Item $p -Force -ErrorAction Stop } catch {}
+        }
+    }
+
+    # 刪除版本資料夾
+    try {
+        Remove-Item $versionDir -Recurse -Force -ErrorAction Stop
+    } catch {
+        Write-Host "刪除版本資料夾時發生錯誤： $_" -ForegroundColor Red
+        return
+    }
+
+    Write-Host "已成功刪除版本 $Version" -ForegroundColor Green
+
+    # 刪除後如果沒有任何版本，提示用戶
+    $left = Get-AllCursorVersions
+    if ($left.Count -eq 0) {
+        Write-Host "目前已無任何版本可用，系統未指向任何 Cursor。" -ForegroundColor Yellow
+    }
 }
 
 # 啟動菜單
