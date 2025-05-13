@@ -49,6 +49,7 @@ powershell -ExecutionPolicy Bypass -File D:\Cursor_Versions\Cursor_Switch.ps1
 8. **直接啟動特定版本**：不切換系統路徑直接啟動版本
 9. **為所有版本創建啟動器**：批量創建捷徑和啟動器
 10. **重命名版本**：修改已建立版本的名稱
+11. **刪除版本**：安全移除指定版本（含資料夾、捷徑、符號連結）
 
 ## 系統要求
 
