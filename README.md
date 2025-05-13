@@ -1,4 +1,4 @@
-# Cursor 多版本管理工具
+# Cursor 多版本管理工具 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/yulin0629/cursor-version-manager)
 
 這是一個用於 Windows 環境的 Cursor 編輯器多版本管理腳本，允許用戶在多個 Cursor 版本之間輕鬆切換。
 
